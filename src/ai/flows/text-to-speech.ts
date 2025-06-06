@@ -34,7 +34,7 @@ const voiceNameTool = ai.defineTool({
     text: z.string().describe('The text to be converted to speech.'),
   }),
   outputSchema: z.string(),
-  async resolve(input) {
+  async resolve(input: { text: string }) {
     // For now, always return 'Algenib'.  In a real application, this
     // could use an LLM to determine the best voice based on the input text.
     return 'Algenib';
@@ -80,7 +80,7 @@ const textToSpeechFlow = ai.defineFlow(
     outputSchema: TextToSpeechOutputSchema,
   },
   async input => {
-    const voiceName = await voiceNameTool(input);
+    const voiceName = await voiceNameTool.resolve(input);
     const audioDataUri = await generateAndStreamAudio(input.text, voiceName);
     return {audioDataUri: audioDataUri};
   }
