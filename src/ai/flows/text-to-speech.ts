@@ -1,3 +1,4 @@
+
 'use server';
 
 /**
@@ -25,23 +26,30 @@ export async function textToSpeech(input: TextToSpeechInput): Promise<TextToSpee
   return textToSpeechFlow(input);
 }
 
-const voiceNameTool = ai.defineTool({
-  name: 'getVoiceName',
-  description: 'Determine the appropriate voice name for text-to-speech generation.',
-  inputSchema: z.object({
-    text: z.string().describe('The text to be converted to speech.'),
-  }),
-  outputSchema: z.string(),
-  async resolve(input: { text: string }) {
-    // For now, always return 'Algenib'.  In a real application, this
-    // could use an LLM to determine the best voice based on the input text.
-    return 'Algenib';
-  },
+const VoiceNameToolInputSchema = z.object({
+  text: z.string().describe('The text to be converted to speech.'),
 });
+type VoiceNameToolInput = z.infer<typeof VoiceNameToolInputSchema>;
+
+const voiceNameToolHandler = async (input: VoiceNameToolInput): Promise<string> => {
+  // For now, always return 'Algenib'.  In a real application, this
+  // could use an LLM to determine the best voice based on the input text.
+  return 'Algenib';
+};
+
+const voiceNameTool = ai.defineTool(
+  {
+    name: 'getVoiceName',
+    description: 'Determine the appropriate voice name for text-to-speech generation.',
+    inputSchema: VoiceNameToolInputSchema,
+    outputSchema: z.string(),
+  },
+  voiceNameToolHandler
+);
 
 async function generateAndStreamAudio(text: string, voiceName: string): Promise<string> {
   const response = await ai.generate({
-    model: 'googleai/gemini-1.5-flash-latest', // Updated model
+    model: 'googleai/gemini-1.5-flash-latest',
     prompt: text,
     config: {
       responseModalities: ['AUDIO'],
@@ -66,7 +74,7 @@ const textToSpeechFlow = ai.defineFlow(
     outputSchema: TextToSpeechOutputSchema,
   },
   async input => {
-    const voiceName = await voiceNameTool.resolve(input);
+    const voiceName = await voiceNameTool(input);
     const audioDataUri = await generateAndStreamAudio(input.text, voiceName);
     return {audioDataUri: audioDataUri};
   }
