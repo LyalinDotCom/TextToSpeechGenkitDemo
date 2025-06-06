@@ -17,20 +17,6 @@ import { Buffer } from 'buffer';
 import { Writer as WavWriter } from 'wav';
 import { PassThrough } from 'stream';
 
-// Helper to escape XML special characters for SSML
-function escapeXml(unsafe: string): string {
-    return unsafe.replace(/[<>&'"]/g, function (c) {
-        switch (c) {
-            case '<': return '&lt;';
-            case '>': return '&gt;';
-            case '&': return '&amp;';
-            case '\'': return '&apos;';
-            case '"': return '&quot;';
-            default: return c;
-        }
-    });
-}
-
 const TextToSpeechInputSchema = z.object({
   text: z.string().describe('The text to convert to speech.'),
   voiceName: z.string().optional().describe('The voice name to use for speech generation. Defaults to Algenib if not provided.'),
@@ -47,8 +33,8 @@ export async function textToSpeech(input: TextToSpeechInput): Promise<TextToSpee
 }
 
 const MultiSpeakerTextToSpeechInputSchema = z.object({
-    text: z.string().describe('The text to convert to speech, potentially with Speaker1: and Speaker2: tags.'),
-    voiceName1: z.string().describe('The voice name for Speaker1 or the primary voice.'),
+    text: z.string().describe('The text to convert to speech, formatted with <speaker="Speaker1">...</speaker> and <speaker="Speaker2">...</speaker> tags.'),
+    voiceName1: z.string().describe('The voice name for Speaker1.'),
     voiceName2: z.string().describe('The voice name for Speaker2.'),
 });
 export type MultiSpeakerTextToSpeechInput = z.infer<typeof MultiSpeakerTextToSpeechInputSchema>;
@@ -57,14 +43,13 @@ export async function multiSpeakerTextToSpeech(input: MultiSpeakerTextToSpeechIn
     return multiSpeakerTextToSpeechFlow(input);
 }
 
-
 const VoiceNameToolInputSchema = z.object({
   text: z.string().describe('The text to be converted to speech.'),
 });
 type VoiceNameToolInput = z.infer<typeof VoiceNameToolInputSchema>;
 
 const voiceNameToolHandler = async (input: VoiceNameToolInput): Promise<string> => {
-  return 'Algenib';
+  return 'Algenib'; // Default voice
 };
 
 const voiceNameTool = ai.defineTool(
@@ -112,7 +97,6 @@ async function pcmToWavDataUri(pcmData: Buffer, channels = 1, sampleRate = 24000
   });
 }
 
-
 async function generateAndStreamAudio(text: string, voiceName: string): Promise<string> {
   const response = await ai.generate({
     model: 'googleai/gemini-2.5-flash-preview-tts',
@@ -142,41 +126,31 @@ async function generateAndStreamAudio(text: string, voiceName: string): Promise<
 }
 
 async function generateAndStreamMultiSpeakerAudio(text: string, voiceName1: string, voiceName2: string): Promise<string> {
-    // Basic parsing for Speaker1: and Speaker2:
-    // This is a simplified parser. Assumes "Speaker1: ... Speaker2: ..." or just "Speaker1: ..." or plain text.
-    let ssmlText = '';
-    const speaker1Regex = /Speaker1:\s*(.*?)(?=\s*Speaker2:|$)/is;
-    const speaker2Regex = /Speaker2:\s*(.*)/is;
-
-    const speaker1Match = text.match(speaker1Regex);
-    const speaker2Match = text.match(speaker2Regex);
-
-    const speaker1Content = speaker1Match ? speaker1Match[1].trim() : null;
-    const speaker2Content = speaker2Match ? speaker2Match[1].trim() : null;
-
-    const ssmlParts = [];
-    if (speaker1Content) {
-        ssmlParts.push(`<voice name="${voiceName1}">${escapeXml(speaker1Content)}</voice>`);
-    }
-    if (speaker2Content) {
-        ssmlParts.push(`<voice name="${voiceName2}">${escapeXml(speaker2Content)}</voice>`);
-    }
-
-    if (ssmlParts.length > 0) {
-        ssmlText = `<speak>${ssmlParts.join(' ')}</speak>`;
-    } else {
-        // Fallback: if no speaker tags, use voiceName1 for the whole text.
-        ssmlText = `<speak><voice name="${voiceName1}">${escapeXml(text)}</voice></speak>`;
-    }
+    // Input 'text' is expected to be in the format:
+    // <speaker="Speaker1">Text for speaker 1.</speaker> <speaker="Speaker2">Text for speaker 2.</speaker>
+    // The speaker tags "Speaker1" and "Speaker2" in the text will be mapped to voiceName1 and voiceName2.
 
     const response = await ai.generate({
         model: 'googleai/gemini-2.5-flash-preview-tts',
-        prompt: ssmlText,
+        prompt: text, // Pass the text directly, expecting speaker tags
         config: {
             responseModalities: ['AUDIO'],
-            speechConfig: { // Provide a default voice config; SSML should override per segment
-                voiceConfig: {
-                    prebuiltVoiceConfig: { voiceName: voiceName1 },
+            speechConfig: {
+                multiSpeakerVoiceConfig: {
+                    speakerVoiceConfigs: [
+                        {
+                            speaker: 'Speaker1', // This identifier must match the tag in the prompt text
+                            voiceConfig: {
+                                prebuiltVoiceConfig: { voiceName: voiceName1 },
+                            },
+                        },
+                        {
+                            speaker: 'Speaker2', // This identifier must match the tag in the prompt text
+                            voiceConfig: {
+                                prebuiltVoiceConfig: { voiceName: voiceName2 },
+                            },
+                        },
+                    ],
                 },
             },
         },
@@ -196,7 +170,6 @@ async function generateAndStreamMultiSpeakerAudio(text: string, voiceName1: stri
     return wavDataUri;
 }
 
-
 const textToSpeechFlow = ai.defineFlow(
   {
     name: 'textToSpeechFlow',
@@ -208,7 +181,6 @@ const textToSpeechFlow = ai.defineFlow(
     if (input.voiceName && input.voiceName.trim() !== '') {
       voiceToUse = input.voiceName;
     } else {
-      // If no voice is provided, use the tool to determine one (e.g., default 'Algenib')
       voiceToUse = await voiceNameTool({ text: input.text });
     }
     const audioDataUri = await generateAndStreamAudio(input.text, voiceToUse);
@@ -220,13 +192,10 @@ const multiSpeakerTextToSpeechFlow = ai.defineFlow(
     {
         name: 'multiSpeakerTextToSpeechFlow',
         inputSchema: MultiSpeakerTextToSpeechInputSchema,
-        outputSchema: TextToSpeechOutputSchema, // Reuses the same output schema
+        outputSchema: TextToSpeechOutputSchema,
     },
     async (input: MultiSpeakerTextToSpeechInput) => {
         const audioDataUri = await generateAndStreamMultiSpeakerAudio(input.text, input.voiceName1, input.voiceName2);
         return { audioDataUri: audioDataUri };
     }
 );
-    
-
-    

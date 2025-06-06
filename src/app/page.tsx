@@ -2,8 +2,8 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from 'react';
-import { textToSpeech, TextToSpeechInput, multiSpeakerTextToSpeech, MultiSpeakerTextToSpeechInput } from '@/ai/flows/text-to-speech';
-import { translateText, TranslateTextInput } from '@/ai/flows/translate-text-flow';
+import { textToSpeech, TextToSpeechInput, TextToSpeechOutput, multiSpeakerTextToSpeech, MultiSpeakerTextToSpeechInput } from '@/ai/flows/text-to-speech';
+import { translateText, TranslateTextInput, TranslateTextOutput } from '@/ai/flows/translate-text-flow';
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -72,7 +72,7 @@ export default function VocalizePage() {
   const [error, setError] = useState<string | null>(null);
   
   // Single speaker state
-  const [selectedVoice, setSelectedVoice] = useState<string>(availableVoices[0].value); // Default for single speaker
+  const [selectedVoice, setSelectedVoice] = useState<string>(availableVoices[0].value);
   
   // Multi-speaker state
   const [enableMultiSpeaker, setEnableMultiSpeaker] = useState<boolean>(false);
@@ -80,17 +80,18 @@ export default function VocalizePage() {
   const [selectedVoice2, setSelectedVoice2] = useState<string>(availableVoices.length > 1 ? availableVoices[1].value : availableVoices[0].value);
 
   // State to track what the current audio was generated for
-  const [generatedForText, setGeneratedForText] = useState<string | null>(null);
+  const [generatedForText, setGeneratedForText] = useState<string | null>(null); // This is the text that was spoken (could be original or translated)
   const [generatedForVoice, setGeneratedForVoice] = useState<string | null>(null); // For single speaker mode
   const [generatedForVoice1, setGeneratedForVoice1] = useState<string | null>(null); // For multi-speaker mode
   const [generatedForVoice2, setGeneratedForVoice2] = useState<string | null>(null); // For multi-speaker mode
   const [generatedForMultiSpeakerMode, setGeneratedForMultiSpeakerMode] = useState<boolean | null>(null);
   
-  const [generatedForOriginalText, setGeneratedForOriginalText] = useState<string | null>(null);
+  // Translation state
+  const [enableTranslation, setEnableTranslation] = useState<boolean>(false);
+  const [selectedTargetLanguage, setSelectedTargetLanguage] = useState<string>('es-US'); // Default to Spanish (US)
+  const [generatedForOriginalText, setGeneratedForOriginalText] = useState<string | null>(null); // Original text if translation was used
   const [generatedForTargetLanguage, setGeneratedForTargetLanguage] = useState<string | null>(null);
 
-  const [enableTranslation, setEnableTranslation] = useState<boolean>(false);
-  const [selectedTargetLanguage, setSelectedTargetLanguage] = useState<string>('es-US');
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const { toast } = useToast();
@@ -99,14 +100,15 @@ export default function VocalizePage() {
     setText(event.target.value);
   };
 
-  // Voice change handlers
   const handleSingleVoiceChange = (value: string) => setSelectedVoice(value);
   const handleVoice1Change = (value: string) => setSelectedVoice1(value);
   const handleVoice2Change = (value: string) => setSelectedVoice2(value);
   
   const handleTargetLanguageChange = (value: string) => setSelectedTargetLanguage(value);
-  const handleEnableMultiSpeakerChange = (checked: boolean) => {
-    setEnableMultiSpeaker(checked);
+
+  const handleEnableMultiSpeakerChange = (checked: boolean | string) => {
+    const isChecked = Boolean(checked);
+    setEnableMultiSpeaker(isChecked);
     // Reset generated audio state when switching modes, as settings are incompatible
     setAudioSrc(null);
     setGeneratedForText(null);
@@ -114,6 +116,8 @@ export default function VocalizePage() {
     setGeneratedForVoice1(null);
     setGeneratedForVoice2(null);
     setGeneratedForMultiSpeakerMode(null);
+    setGeneratedForOriginalText(null);
+    setGeneratedForTargetLanguage(null);
   };
 
 
@@ -125,35 +129,36 @@ export default function VocalizePage() {
     }
 
     setError(null);
-    setIsPlaying(false); // Stop current playback if any
+    if (audioRef.current && isPlaying) { // If playing, pause it
+        audioRef.current.pause();
+        setIsPlaying(false);
+        return;
+    }
 
     let needsGeneration = false;
+    const currentTextForGeneration = enableTranslation ? generatedForOriginalText : generatedForText;
+    
     if (enableMultiSpeaker) {
         needsGeneration = !audioSrc ||
-            text !== generatedForText ||
+            (enableTranslation ? text !== generatedForOriginalText : text !== generatedForText) || // Compare with original text if translated, else spoken text
             selectedVoice1 !== generatedForVoice1 ||
             selectedVoice2 !== generatedForVoice2 ||
             enableMultiSpeaker !== generatedForMultiSpeakerMode ||
-            (enableTranslation && (text !== generatedForOriginalText || selectedTargetLanguage !== generatedForTargetLanguage));
-
-    } else { // Single speaker mode
+            (enableTranslation && selectedTargetLanguage !== generatedForTargetLanguage);
+    } else {
         needsGeneration = !audioSrc ||
-            text !== generatedForText ||
+            (enableTranslation ? text !== generatedForOriginalText : text !== generatedForText) ||
             selectedVoice !== generatedForVoice ||
             enableMultiSpeaker !== generatedForMultiSpeakerMode ||
-            (enableTranslation && (text !== generatedForOriginalText || selectedTargetLanguage !== generatedForTargetLanguage));
+            (enableTranslation && selectedTargetLanguage !== generatedForTargetLanguage);
     }
     
     if (audioRef.current && audioSrc && !needsGeneration) {
-        if (isPlaying) {
-            audioRef.current.pause();
-        } else {
-            audioRef.current.play().catch(playError => {
-                console.error("Error playing audio:", playError);
-                setError("Could not play audio. Please try generating again.");
-                toast({ variant: "destructive", title: "Playback Error", description: "Could not play the audio." });
-            });
-        }
+        audioRef.current.play().catch(playError => {
+            console.error("Error playing audio:", playError);
+            setError("Could not play audio. Please try generating again.");
+            toast({ variant: "destructive", title: "Playback Error", description: "Could not play the audio." });
+        });
         return;
     }
 
@@ -166,7 +171,7 @@ export default function VocalizePage() {
         const targetLangObj = supportedLanguages.find(lang => lang.code === selectedTargetLanguage);
         if (!targetLangObj) throw new Error("Selected target language not found.");
         const translationInput: TranslateTextInput = { textToTranslate: text, targetLanguageCode: selectedTargetLanguage, targetLanguageName: targetLangObj.name };
-        const translationResult = await translateText(translationInput);
+        const translationResult: TranslateTextOutput = await translateText(translationInput);
         textToSpeak = translationResult.translatedText;
         toast({ title: "Translation Complete", description: "Now generating speech." });
       }
@@ -182,20 +187,20 @@ export default function VocalizePage() {
 
       if (ttsResult.audioDataUri) {
         setAudioSrc(ttsResult.audioDataUri);
-        setGeneratedForText(textToSpeak); // This is the text that was actually vocalized
+        setGeneratedForText(textToSpeak); // Text that was actually vocalized
         setGeneratedForMultiSpeakerMode(enableMultiSpeaker);
         if (enableMultiSpeaker) {
             setGeneratedForVoice1(selectedVoice1);
             setGeneratedForVoice2(selectedVoice2);
-            setGeneratedForVoice(null); // Clear single voice tracking
+            setGeneratedForVoice(null);
         } else {
             setGeneratedForVoice(selectedVoice);
-            setGeneratedForVoice1(null); // Clear multi-voice tracking
+            setGeneratedForVoice1(null);
             setGeneratedForVoice2(null);
         }
         
         if (enableTranslation) {
-          setGeneratedForOriginalText(text);
+          setGeneratedForOriginalText(text); // Store the original English text
           setGeneratedForTargetLanguage(selectedTargetLanguage);
         } else {
           setGeneratedForOriginalText(null);
@@ -204,6 +209,7 @@ export default function VocalizePage() {
         
         toast({ title: "Speech Generated", description: "Audio is ready and will play shortly." });
         
+        // Auto-play after a short delay
         setTimeout(() => {
           if (audioRef.current) {
             audioRef.current.play().catch(playError => {
@@ -222,6 +228,7 @@ export default function VocalizePage() {
       setError(`Operation failed: ${errorMessage}`);
       toast({ variant: "destructive", title: "Operation Error", description: `Failed: ${errorMessage}` });
       setAudioSrc(null); 
+      // Clear all generation tracking state on error
       setGeneratedForText(null);
       setGeneratedForVoice(null);
       setGeneratedForVoice1(null);
@@ -238,13 +245,13 @@ export default function VocalizePage() {
     if (audioSrc) {
       const link = document.createElement('a');
       link.href = audioSrc;
-      let extension = 'wav'; // default
+      let extension = 'wav';
       try {
         const mimeTypeMatch = audioSrc.match(/data:(audio\/.*?);/);
         if (mimeTypeMatch && mimeTypeMatch[1]) {
           const mimeType = mimeTypeMatch[1];
           if (mimeType === 'audio/wav' || mimeType === 'audio/x-wav') extension = 'wav';
-          else if (mimeType === 'audio/mpeg') extension = 'mp3';
+          else if (mimeType === 'audio/mpeg') extension = 'mp3'; // Though we only generate WAV
         }
       } catch (e) { console.warn("Could not determine audio MIME type, defaulting to .wav"); }
       link.download = `vocalize_speech_${Date.now()}.${extension}`;
@@ -272,26 +279,29 @@ export default function VocalizePage() {
     }
   }, [audioSrc]); 
 
-  // Determine if current audio matches all relevant settings
   const isAudioCurrent = () => {
-    if (!audioSrc) return false;
-    if (enableTranslation && (text !== generatedForOriginalText || selectedTargetLanguage !== generatedForTargetLanguage)) return false;
-    if (enableMultiSpeaker) {
-        return text === generatedForText && 
-               selectedVoice1 === generatedForVoice1 && 
-               selectedVoice2 === generatedForVoice2 &&
-               enableMultiSpeaker === generatedForMultiSpeakerMode;
+    if (!audioSrc || !generatedForText) return false; // No audio or no record of what it was generated for
+
+    if (enableTranslation) {
+        if (text !== generatedForOriginalText || selectedTargetLanguage !== generatedForTargetLanguage) return false;
+    } else {
+        if (text !== generatedForText) return false; // Compare with spoken text if not translated
     }
-    return text === generatedForText && 
-           selectedVoice === generatedForVoice &&
-           enableMultiSpeaker === generatedForMultiSpeakerMode;
+
+    if (enableMultiSpeaker !== generatedForMultiSpeakerMode) return false;
+
+    if (enableMultiSpeaker) {
+        return selectedVoice1 === generatedForVoice1 && selectedVoice2 === generatedForVoice2;
+    } else {
+        return selectedVoice === generatedForVoice;
+    }
   };
 
   const playButtonText = () => {
     const current = isAudioCurrent();
     if (isPlaying) return "Pause";
-    if (current) return "Play"; // Audio exists for current settings and is paused
-    return "Generate & Play"; // Needs generation or settings changed
+    if (current && audioSrc) return "Play"; 
+    return "Generate & Play"; 
   };
 
 
@@ -312,7 +322,7 @@ export default function VocalizePage() {
                 <Checkbox
                     id="enable-multispeaker"
                     checked={enableMultiSpeaker}
-                    onCheckedChange={(checked) => handleEnableMultiSpeakerChange(Boolean(checked))}
+                    onCheckedChange={handleEnableMultiSpeakerChange}
                 />
                 <Label htmlFor="enable-multispeaker" className="text-sm font-medium text-foreground flex items-center">
                     <Users className="mr-2 h-4 w-4" /> Enable Multi-Speaker
@@ -433,14 +443,14 @@ export default function VocalizePage() {
                 id="text-input"
                 value={text}
                 onChange={handleTextChange}
-                placeholder={enableTranslation ? "Type English text here..." : "Type or paste your text here..."}
+                placeholder={enableTranslation ? "Type English text here..." : (enableMultiSpeaker ? '<speaker="Speaker1">Hello.</speaker> <speaker="Speaker2">Hi there!</speaker>' : "Type or paste your text here...")}
                 rows={6}
                 className="w-full rounded-md shadow-sm focus:ring-primary focus:border-primary"
                 aria-label="Text to convert to speech"
               />
               {enableMultiSpeaker && (
                 <p className="mt-2 text-xs text-muted-foreground">
-                  For multi-speaker, use format: <code className="bg-muted px-1 py-0.5 rounded">Speaker1: Their line. Speaker2: Their line.</code> Fixed tags 'Speaker1' and 'Speaker2' will be mapped to selected voices.
+                  For multi-speaker, use format: <code className="bg-muted px-1 py-0.5 rounded">&lt;speaker="Speaker1"&gt;Their line.&lt;/speaker&gt; &lt;speaker="Speaker2"&gt;Their line.&lt;/speaker&gt;</code> Use the exact tags "Speaker1" and "Speaker2".
                 </p>
               )}
             </div>
@@ -457,7 +467,7 @@ export default function VocalizePage() {
 
           <div className="mt-8 pt-6 border-t border-border">
              <h3 className="text-lg font-semibold text-foreground mb-4 text-center">
-                {isAudioCurrent() ? "Audio Controls" : "Generate & Play"}
+                { isAudioCurrent() && audioSrc ? "Audio Controls" : "Generate & Play"}
             </h3>
             <audio ref={audioRef} src={audioSrc ?? undefined} className="hidden" />
             <div className="flex flex-col sm:flex-row justify-center items-center space-y-4 sm:space-y-0 sm:space-x-4">
@@ -496,5 +506,3 @@ export default function VocalizePage() {
     </div>
   );
 }
-
-    
