@@ -256,7 +256,7 @@ export default function VocalizePage() {
              <h3 className="text-lg font-semibold text-foreground mb-4 text-center">
                 {audioSrc && text === generatedForText && selectedVoice === generatedForVoice ? "Audio Controls" : "Generate & Play"}
             </h3>
-            <audio ref={audioRef} src={audioSrc || ''} className="hidden" />
+            <audio ref={audioRef} src={audioSrc} className="hidden" />
             <div className="flex flex-col sm:flex-row justify-center items-center space-y-4 sm:space-y-0 sm:space-x-4">
               <Button
                 onClick={handlePrimaryAction}
