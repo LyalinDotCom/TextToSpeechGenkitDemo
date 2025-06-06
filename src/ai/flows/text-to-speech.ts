@@ -10,8 +10,6 @@
 
 import {ai} from '@/ai/genkit';
 import {z} from 'genkit';
-import {Readable} from 'stream';
-import * as wav from 'wav';
 
 const TextToSpeechInputSchema = z.object({
   text: z.string().describe('The text to convert to speech.'),
@@ -41,21 +39,9 @@ const voiceNameTool = ai.defineTool({
   },
 });
 
-const prompt = ai.definePrompt({
-  name: 'textToSpeechPrompt',
-  tools: [voiceNameTool],
-  input: {schema: TextToSpeechInputSchema},
-  output: {schema: TextToSpeechOutputSchema},
-  prompt: `You are a text-to-speech converter. The user will provide text, and you will convert it to speech.  
-
-  Use the getVoiceName tool to select the voice, and then return the audio data URI.
-
-  Text: {{{text}}}`,
-});
-
 async function generateAndStreamAudio(text: string, voiceName: string): Promise<string> {
   const response = await ai.generate({
-    model: 'googleai/gemini-2.0-flash',
+    model: 'googleai/gemini-1.5-flash-latest', // Updated model
     prompt: text,
     config: {
       responseModalities: ['AUDIO'],
