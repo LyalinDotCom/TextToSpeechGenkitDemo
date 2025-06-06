@@ -1,3 +1,4 @@
+
 "use client";
 
 import React, { useState, useRef, useEffect } from 'react';
@@ -7,11 +8,46 @@ import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Play, Pause, Download, Loader2, AlertCircle } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
 
+const availableVoices = [
+  { value: 'Algenib', label: 'Algenib -- Gravelly (Default)' },
+  { value: 'Zephyr', label: 'Zephyr -- Bright' },
+  { value: 'Puck', label: 'Puck -- Upbeat' },
+  { value: 'Charon', label: 'Charon -- Informative' },
+  { value: 'Kore', label: 'Kore -- Firm' },
+  { value: 'Fenrir', label: 'Fenrir -- Excitable' },
+  { value: 'Leda', label: 'Leda -- Youthful' },
+  { value: 'Orus', label: 'Orus -- Firm' },
+  { value: 'Aoede', label: 'Aoede -- Breezy' },
+  { value: 'Callirrhoe', label: 'Callirrhoe -- Easy-going' },
+  { value: 'Autonoe', label: 'Autonoe -- Bright' },
+  { value: 'Enceladus', label: 'Enceladus -- Breathy' },
+  { value: 'Iapetus', label: 'Iapetus -- Clear' },
+  { value: 'Umbriel', label: 'Umbriel -- Easy-going' },
+  { value: 'Algieba', label: 'Algieba -- Smooth' },
+  { value: 'Despina', label: 'Despina -- Smooth' },
+  { value: 'Erinome', label: 'Erinome -- Clear' },
+  { value: 'Rasalgethi', label: 'Rasalgethi -- Informative' },
+  { value: 'Laomedeia', label: 'Laomedeia -- Upbeat' },
+  { value: 'Achernar', label: 'Achernar -- Soft' },
+  { value: 'Alnilam', label: 'Alnilam -- Firm' },
+  { value: 'Schedar', label: 'Schedar -- Even' },
+  { value: 'Gacrux', label: 'Gacrux -- Mature' },
+  { value: 'Pulcherrima', label: 'Pulcherrima -- Forward' },
+  { value: 'Achird', label: 'Achird -- Friendly' },
+  { value: 'Zubenelgenubi', label: 'Zubenelgenubi -- Casual' },
+  { value: 'Vindemiatrix', label: 'Vindemiatrix -- Gentle' },
+  { value: 'Sadachbia', label: 'Sadachbia -- Lively' },
+  { value: 'Sadaltager', label: 'Sadaltager -- Knowledgeable' },
+  { value: 'Sulafat', label: 'Sulafat -- Warm' },
+];
+
 export default function VocalizePage() {
   const [text, setText] = useState<string>('');
+  const [selectedVoice, setSelectedVoice] = useState<string>('Algenib');
   const [audioSrc, setAudioSrc] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
@@ -21,6 +57,10 @@ export default function VocalizePage() {
 
   const handleTextChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
     setText(event.target.value);
+  };
+
+  const handleVoiceChange = (value: string) => {
+    setSelectedVoice(value);
   };
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -36,7 +76,7 @@ export default function VocalizePage() {
     setIsPlaying(false);
 
     try {
-      const result = await textToSpeech({ text });
+      const result = await textToSpeech({ text, voiceName: selectedVoice });
       if (result.audioDataUri) {
         setAudioSrc(result.audioDataUri);
         toast({
@@ -83,7 +123,7 @@ export default function VocalizePage() {
       const link = document.createElement('a');
       link.href = audioSrc;
       
-      let extension = 'wav'; // Default as requested by user for filename
+      let extension = 'wav'; 
       try {
         const mimeTypeMatch = audioSrc.match(/data:(audio\/.*?);/);
         if (mimeTypeMatch && mimeTypeMatch[1]) {
@@ -92,7 +132,6 @@ export default function VocalizePage() {
           else if (mimeType === 'audio/mpeg') extension = 'mp3';
           else if (mimeType === 'audio/ogg') extension = 'ogg';
           else if (mimeType === 'audio/webm') extension = 'webm';
-          // Add more types if needed, or keep it simple
         }
       } catch (e) {
         console.warn("Could not determine audio MIME type from data URI for extension, defaulting to .wav");
@@ -142,6 +181,24 @@ export default function VocalizePage() {
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-6">
+            <div>
+              <Label htmlFor="voice-select" className="block text-sm font-medium text-foreground mb-1">
+                Choose a voice
+              </Label>
+              <Select onValueChange={handleVoiceChange} defaultValue={selectedVoice}>
+                <SelectTrigger id="voice-select" className="w-full rounded-md shadow-sm">
+                  <SelectValue placeholder="Select a voice" />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableVoices.map((voice) => (
+                    <SelectItem key={voice.value} value={voice.value}>
+                      {voice.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
             <div>
               <Label htmlFor="text-input" className="block text-sm font-medium text-foreground mb-1">
                 Enter your text
@@ -215,3 +272,5 @@ export default function VocalizePage() {
     </div>
   );
 }
+
+    
