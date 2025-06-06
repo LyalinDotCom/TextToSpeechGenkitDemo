@@ -2,7 +2,7 @@
 'use server';
 
 /**
- * @fileOverview A text-to-speech AI agent.
+ * @fileOverview A text-to-speech AI agent that converts PCM audio to WAV.
  *
  * - textToSpeech - A function that handles the text-to-speech process.
  * - TextToSpeechInput - The input type for the textToSpeech function.
@@ -11,6 +11,10 @@
 
 import {ai} from '@/ai/genkit';
 import {z} from 'genkit';
+import { Buffer } from 'buffer';
+import { Writer as WavWriter } from 'wav';
+import { PassThrough } from 'stream';
+
 
 const TextToSpeechInputSchema = z.object({
   text: z.string().describe('The text to convert to speech.'),
@@ -18,7 +22,7 @@ const TextToSpeechInputSchema = z.object({
 export type TextToSpeechInput = z.infer<typeof TextToSpeechInputSchema>;
 
 const TextToSpeechOutputSchema = z.object({
-  audioDataUri: z.string().describe('The audio data URI of the generated speech.'),
+  audioDataUri: z.string().describe('The audio data URI of the generated speech in WAV format.'),
 });
 export type TextToSpeechOutput = z.infer<typeof TextToSpeechOutputSchema>;
 
@@ -47,6 +51,43 @@ const voiceNameTool = ai.defineTool(
   voiceNameToolHandler
 );
 
+async function pcmToWavDataUri(pcmData: Buffer, channels = 1, sampleRate = 24000, bitDepth = 16): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const wavBufferChunks: Buffer[] = [];
+    const passThrough = new PassThrough();
+
+    passThrough.on('data', (chunk) => {
+      wavBufferChunks.push(chunk as Buffer);
+    });
+    passThrough.on('end', () => {
+      const wavBuffer = Buffer.concat(wavBufferChunks);
+      const wavDataUri = `data:audio/wav;base64,${wavBuffer.toString('base64')}`;
+      resolve(wavDataUri);
+    });
+    passThrough.on('error', (err) => {
+      console.error("Error during WAV conversion stream:", err);
+      reject(err);
+    });
+
+    const writer = new WavWriter({
+      channels: channels,
+      sampleRate: sampleRate,
+      bitDepth: bitDepth,
+    });
+
+    writer.on('error', (err) => {
+        console.error("Error in WAV Writer:", err);
+        // Propagate error to PassThrough, which will reject the promise
+        passThrough.emit('error', err);
+    });
+
+    writer.pipe(passThrough);
+    writer.write(pcmData);
+    writer.end();
+  });
+}
+
+
 async function generateAndStreamAudio(text: string, voiceName: string): Promise<string> {
   const response = await ai.generate({
     model: 'googleai/gemini-2.5-flash-preview-tts',
@@ -55,7 +96,7 @@ async function generateAndStreamAudio(text: string, voiceName: string): Promise<
       responseModalities: ['AUDIO'],
       speechConfig: {
         voiceConfig: {
-          prebuiltVoiceConfig: {voiceName: voiceName},
+          prebuiltVoiceConfig: { voiceName: voiceName },
         },
       },
     },
@@ -64,7 +105,27 @@ async function generateAndStreamAudio(text: string, voiceName: string): Promise<
   if (!audioPart?.url) {
     throw new Error('Audio generation failed: No media URL in response.');
   }
-  return audioPart.url;
+
+  const parts = audioPart.url.split(',');
+  if (parts.length < 2 || !parts[0].startsWith('data:audio/') || !parts[0].includes(';base64')) {
+    // Gemini TTS might return 'data:audio/l16;rate=24000;channels=1;base64,....' or similar
+    // We are mostly interested in the base64 part.
+     const base64StartIndex = audioPart.url.indexOf(';base64,');
+     if (base64StartIndex === -1) {
+        throw new Error('Invalid audio data URI format from Genkit: missing ;base64, tag.');
+     }
+     const base64PcmData = audioPart.url.substring(base64StartIndex + ';base64,'.length);
+     const pcmBuffer = Buffer.from(base64PcmData, 'base64');
+     // Assuming Gemini TTS outputs 24kHz, 16-bit, mono PCM
+     const wavDataUri = await pcmToWavDataUri(pcmBuffer, 1, 24000, 16);
+     return wavDataUri;
+  }
+  // If format was simpler like 'data:audio/mpeg;base64,..."
+  const base64PcmData = parts[1];
+  const pcmBuffer = Buffer.from(base64PcmData, 'base64');
+  // Assuming Gemini TTS outputs 24kHz, 16-bit, mono PCM
+  const wavDataUri = await pcmToWavDataUri(pcmBuffer, 1, 24000, 16);
+  return wavDataUri;
 }
 
 const textToSpeechFlow = ai.defineFlow(
