@@ -3,14 +3,16 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { textToSpeech, TextToSpeechInput } from '@/ai/flows/text-to-speech';
+import { translateText, TranslateTextInput } from '@/ai/flows/translate-text-flow';
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Play, Pause, Download, Loader2, AlertCircle, Info } from 'lucide-react';
+import { Play, Pause, Download, Loader2, AlertCircle, Info, Languages } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
 
 const availableVoices = [
@@ -70,8 +72,13 @@ export default function VocalizePage() {
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   
-  const [generatedForText, setGeneratedForText] = useState<string | null>(null);
+  const [generatedForText, setGeneratedForText] = useState<string | null>(null); // Stores the text for which audio was last generated (original or translated)
   const [generatedForVoice, setGeneratedForVoice] = useState<string | null>(null);
+  const [generatedForOriginalText, setGeneratedForOriginalText] = useState<string | null>(null); // Original text if translation was used
+  const [generatedForTargetLanguage, setGeneratedForTargetLanguage] = useState<string | null>(null); // Target language code if translation was used
+
+  const [enableTranslation, setEnableTranslation] = useState<boolean>(false);
+  const [selectedTargetLanguage, setSelectedTargetLanguage] = useState<string>('es-US'); // Default to Spanish
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const { toast } = useToast();
@@ -84,78 +91,116 @@ export default function VocalizePage() {
     setSelectedVoice(value);
   };
 
+  const handleTargetLanguageChange = (value: string) => {
+    setSelectedTargetLanguage(value);
+  };
+
   const handlePrimaryAction = async () => {
     if (!text.trim()) {
-      setError("Please enter some text to generate speech.");
-      toast({
-        variant: "destructive",
-        title: "Input Required",
-        description: "Please enter some text.",
-      });
+      setError("Please enter some text.");
+      toast({ variant: "destructive", title: "Input Required", description: "Please enter some text." });
       return;
     }
 
-    const needsGeneration = !audioSrc || text !== generatedForText || selectedVoice !== generatedForVoice;
+    setError(null);
+    setIsPlaying(false);
 
-    if (needsGeneration) {
-      setIsLoading(true);
-      setError(null);
-      setIsPlaying(false); 
-
-      try {
-        const input: TextToSpeechInput = { text, voiceName: selectedVoice };
-        const result = await textToSpeech(input);
-        if (result.audioDataUri) {
-          setAudioSrc(result.audioDataUri);
-          setGeneratedForText(text);
-          setGeneratedForVoice(selectedVoice);
-          
-          toast({
-            title: "Speech Generated",
-            description: "Audio is ready and will play shortly.",
-          });
-          
-          setTimeout(() => {
-            if (audioRef.current) {
-              audioRef.current.play().catch(playError => {
-                console.error("Error auto-playing generated audio:", playError);
-                setError("Could not automatically play audio. Click Play to try again.");
-                toast({ variant: "destructive", title: "Playback Error", description: "Could not auto-play audio." });
-              });
-            }
-          }, 100); 
+    let needsGeneration = false;
+    if (enableTranslation) {
+      needsGeneration =
+        !audioSrc ||
+        text !== generatedForOriginalText ||
+        selectedVoice !== generatedForVoice ||
+        selectedTargetLanguage !== generatedForTargetLanguage;
+    } else {
+      needsGeneration =
+        !audioSrc ||
+        text !== generatedForText || 
+        selectedVoice !== generatedForVoice;
+    }
+    
+    if (audioRef.current && audioSrc && !needsGeneration) { // Audio exists and matches current settings
+        if (isPlaying) {
+            audioRef.current.pause();
         } else {
-          throw new Error("Audio generation failed to return data.");
+            audioRef.current.play().catch(playError => {
+                console.error("Error playing audio:", playError);
+                setError("Could not play audio. Please try generating again.");
+                toast({ variant: "destructive", title: "Playback Error", description: "Could not play the audio." });
+            });
         }
-      } catch (err) {
-        console.error("Error generating speech:", err);
-        const errorMessage = err instanceof Error ? err.message : "An unknown error occurred.";
-        setError(`Failed to generate speech: ${errorMessage}`);
+        return;
+    }
+
+    // Generation is needed or audio doesn't exist for current settings
+    setIsLoading(true);
+    let textToSpeak = text;
+
+    try {
+      if (enableTranslation) {
+        toast({ title: "Translating Text", description: "Please wait..." });
+        const targetLangObj = supportedLanguages.find(lang => lang.code === selectedTargetLanguage);
+        if (!targetLangObj) {
+          throw new Error("Selected target language not found.");
+        }
+        const translationInput: TranslateTextInput = {
+          textToTranslate: text,
+          targetLanguageCode: selectedTargetLanguage,
+          targetLanguageName: targetLangObj.name,
+        };
+        const translationResult = await translateText(translationInput);
+        textToSpeak = translationResult.translatedText;
+        toast({ title: "Translation Complete", description: "Now generating speech." });
+      }
+
+      const ttsInput: TextToSpeechInput = { text: textToSpeak, voiceName: selectedVoice };
+      const ttsResult = await textToSpeech(ttsInput);
+
+      if (ttsResult.audioDataUri) {
+        setAudioSrc(ttsResult.audioDataUri);
+        if (enableTranslation) {
+          setGeneratedForOriginalText(text);
+          setGeneratedForTargetLanguage(selectedTargetLanguage);
+        } else {
+          setGeneratedForOriginalText(null);
+          setGeneratedForTargetLanguage(null);
+        }
+        setGeneratedForText(textToSpeak); // This is the text that was actually vocalized
+        setGeneratedForVoice(selectedVoice);
+        
         toast({
-          variant: "destructive",
-          title: "Generation Error",
-          description: `Failed to generate speech: ${errorMessage}`,
+          title: "Speech Generated",
+          description: "Audio is ready and will play shortly.",
         });
-        setAudioSrc(null);
-        setGeneratedForText(null);
-        setGeneratedForVoice(null);
-      } finally {
-        setIsLoading(false);
-      }
-    } else if (audioRef.current) { 
-      if (isPlaying) {
-        audioRef.current.pause();
+        
+        setTimeout(() => {
+          if (audioRef.current) {
+            audioRef.current.play().catch(playError => {
+              console.error("Error auto-playing generated audio:", playError);
+              setError("Could not automatically play audio. Click Play to try again.");
+              toast({ variant: "destructive", title: "Playback Error", description: "Could not auto-play audio." });
+            });
+          }
+        }, 100);
       } else {
-        audioRef.current.play().catch(playError => {
-          console.error("Error playing audio:", playError);
-          setError("Could not play audio. Please try generating again or check console.");
-           toast({
-            variant: "destructive",
-            title: "Playback Error",
-            description: "Could not play the audio.",
-          });
-        });
+        throw new Error("Audio generation failed to return data.");
       }
+    } catch (err) {
+      console.error("Error in primary action:", err);
+      const errorMessage = err instanceof Error ? err.message : "An unknown error occurred.";
+      setError(`Operation failed: ${errorMessage}`);
+      toast({
+        variant: "destructive",
+        title: "Operation Error",
+        description: `Failed: ${errorMessage}`,
+      });
+      setAudioSrc(null); // Clear previous audio if generation fails
+      setGeneratedForText(null);
+      setGeneratedForVoice(null);
+      setGeneratedForOriginalText(null);
+      setGeneratedForTargetLanguage(null);
+    } finally {
+      setIsLoading(false);
     }
   };
   
@@ -164,7 +209,7 @@ export default function VocalizePage() {
       const link = document.createElement('a');
       link.href = audioSrc;
       
-      let extension = 'wav'; 
+      let extension = 'wav';
       try {
         const mimeTypeMatch = audioSrc.match(/data:(audio\/.*?);/);
         if (mimeTypeMatch && mimeTypeMatch[1]) {
@@ -238,10 +283,43 @@ export default function VocalizePage() {
               </Select>
             </div>
 
+            <div className="space-y-2">
+                <div className="flex items-center space-x-2">
+                    <Checkbox
+                        id="enable-translation"
+                        checked={enableTranslation}
+                        onCheckedChange={(checked) => setEnableTranslation(Boolean(checked))}
+                    />
+                    <Label htmlFor="enable-translation" className="text-sm font-medium text-foreground">
+                        Translate English text to another language before generating speech
+                    </Label>
+                </div>
+                {enableTranslation && (
+                    <div>
+                        <Label htmlFor="target-language-select" className="block text-sm font-medium text-foreground mb-1">
+                            Target Language for Translation
+                        </Label>
+                        <Select onValueChange={handleTargetLanguageChange} defaultValue={selectedTargetLanguage}>
+                            <SelectTrigger id="target-language-select" className="w-full rounded-md shadow-sm">
+                                <SelectValue placeholder="Select target language" />
+                            </SelectTrigger>
+                            <SelectContent>
+                            {supportedLanguages.filter(lang => lang.code !== 'en-US' && lang.code !== 'en-IN & hi-IN bundle').map((lang) => (
+                                <SelectItem key={lang.code} value={lang.code}>
+                                    {lang.name} ({lang.code})
+                                </SelectItem>
+                            ))}
+                            </SelectContent>
+                        </Select>
+                    </div>
+                )}
+            </div>
+
+
             <div>
               <div className="flex items-center mb-1">
                 <Label htmlFor="text-input" className="block text-sm font-medium text-foreground">
-                  Enter your text
+                  {enableTranslation ? "Enter English text to translate & vocalize" : "Enter your text"}
                 </Label>
                 <TooltipProvider>
                   <Tooltip>
@@ -251,7 +329,7 @@ export default function VocalizePage() {
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent className="max-w-md" side="top">
-                      <p className="font-semibold mb-2 text-base">Supported Languages (auto-detected):</p>
+                      <p className="font-semibold mb-2 text-base">Supported Languages for TTS (auto-detected):</p>
                       <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
                         {supportedLanguages.map(lang => (
                           <div key={lang.code}>
@@ -267,7 +345,7 @@ export default function VocalizePage() {
                 id="text-input"
                 value={text}
                 onChange={handleTextChange}
-                placeholder="Type or paste your text here..."
+                placeholder={enableTranslation ? "Type English text here..." : "Type or paste your text here..."}
                 rows={6}
                 className="w-full rounded-md shadow-sm focus:ring-primary focus:border-primary"
                 aria-label="Text to convert to speech"
@@ -286,20 +364,20 @@ export default function VocalizePage() {
 
           <div className="mt-8 pt-6 border-t border-border">
              <h3 className="text-lg font-semibold text-foreground mb-4 text-center">
-                {audioSrc && text === generatedForText && selectedVoice === generatedForVoice ? "Audio Controls" : "Generate & Play"}
+                {audioSrc && (enableTranslation ? (text === generatedForOriginalText && selectedTargetLanguage === generatedForTargetLanguage) : text === generatedForText) && selectedVoice === generatedForVoice ? "Audio Controls" : "Generate & Play"}
             </h3>
-            <audio ref={audioRef} src={audioSrc} className="hidden" />
+            <audio ref={audioRef} src={audioSrc ?? undefined} className="hidden" />
             <div className="flex flex-col sm:flex-row justify-center items-center space-y-4 sm:space-y-0 sm:space-x-4">
               <Button
                 onClick={handlePrimaryAction}
                 disabled={isLoading || !text.trim()}
                 className="w-full sm:w-auto flex items-center justify-center text-base py-3 rounded-md min-w-[150px]"
-                aria-label={isLoading ? "Generating speech" : (isPlaying ? "Pause audio" : "Play audio")}
+                aria-label={isLoading ? "Processing..." : (isPlaying ? "Pause audio" : "Play audio")}
               >
                 {isLoading ? (
                   <>
                     <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                    Generating...
+                    Processing...
                   </>
                 ) : isPlaying ? (
                   <>
@@ -332,4 +410,3 @@ export default function VocalizePage() {
     </div>
   );
 }
-
