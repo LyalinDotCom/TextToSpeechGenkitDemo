@@ -9,7 +9,8 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Play, Pause, Download, Loader2, AlertCircle } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Play, Pause, Download, Loader2, AlertCircle, Info } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
 
 const availableVoices = [
@@ -44,6 +45,22 @@ const availableVoices = [
   { value: 'Sadaltager', label: 'Sadaltager -- Knowledgeable' },
   { value: 'Sulafat', label: 'Sulafat -- Warm' },
 ];
+
+const supportedLanguages = [
+  { name: 'Arabic (Egyptian)', code: 'ar-EG' }, { name: 'German (Germany)', code: 'de-DE' },
+  { name: 'English (US)', code: 'en-US' }, { name: 'Spanish (US)', code: 'es-US' },
+  { name: 'French (France)', code: 'fr-FR' }, { name: 'Hindi (India)', code: 'hi-IN' },
+  { name: 'Indonesian (Indonesia)', code: 'id-ID' }, { name: 'Italian (Italy)', code: 'it-IT' },
+  { name: 'Japanese (Japan)', code: 'ja-JP' }, { name: 'Korean (Korea)', code: 'ko-KR' },
+  { name: 'Portuguese (Brazil)', code: 'pt-BR' }, { name: 'Russian (Russia)', code: 'ru-RU' },
+  { name: 'Dutch (Netherlands)', code: 'nl-NL' }, { name: 'Polish (Poland)', code: 'pl-PL' },
+  { name: 'Thai (Thailand)', code: 'th-TH' }, { name: 'Turkish (Turkey)', code: 'tr-TR' },
+  { name: 'Vietnamese (Vietnam)', code: 'vi-VN' }, { name: 'Romanian (Romania)', code: 'ro-RO' },
+  { name: 'Ukrainian (Ukraine)', code: 'uk-UA' }, { name: 'Bengali (Bangladesh)', code: 'bn-BD' },
+  { name: 'English (India)', code: 'en-IN & hi-IN bundle' }, { name: 'Marathi (India)', code: 'mr-IN' },
+  { name: 'Tamil (India)', code: 'ta-IN' }, { name: 'Telugu (India)', code: 'te-IN' },
+];
+
 
 export default function VocalizePage() {
   const [text, setText] = useState<string>('');
@@ -83,7 +100,7 @@ export default function VocalizePage() {
     if (needsGeneration) {
       setIsLoading(true);
       setError(null);
-      setIsPlaying(false); // Stop any previous playback
+      setIsPlaying(false); 
 
       try {
         const input: TextToSpeechInput = { text, voiceName: selectedVoice };
@@ -97,7 +114,7 @@ export default function VocalizePage() {
             title: "Speech Generated",
             description: "Audio is ready and will play shortly.",
           });
-          // Autoplay after generation. Use timeout to ensure <audio> has new src.
+          
           setTimeout(() => {
             if (audioRef.current) {
               audioRef.current.play().catch(playError => {
@@ -106,7 +123,7 @@ export default function VocalizePage() {
                 toast({ variant: "destructive", title: "Playback Error", description: "Could not auto-play audio." });
               });
             }
-          }, 100); // Small delay for src update
+          }, 100); 
         } else {
           throw new Error("Audio generation failed to return data.");
         }
@@ -125,7 +142,7 @@ export default function VocalizePage() {
       } finally {
         setIsLoading(false);
       }
-    } else if (audioRef.current) { // Audio already generated and matches current inputs
+    } else if (audioRef.current) { 
       if (isPlaying) {
         audioRef.current.pause();
       } else {
@@ -154,7 +171,6 @@ export default function VocalizePage() {
           const mimeType = mimeTypeMatch[1];
           if (mimeType === 'audio/wav' || mimeType === 'audio/x-wav') extension = 'wav';
           else if (mimeType === 'audio/mpeg') extension = 'mp3';
-          // Add more mimetypes if needed
         }
       } catch (e) {
         console.warn("Could not determine audio MIME type, defaulting to .wav");
@@ -182,17 +198,13 @@ export default function VocalizePage() {
       audio.addEventListener('pause', handlePause);
       audio.addEventListener('ended', handleEnded);
       
-      // If audioSrc is changed (e.g. new generation) and it's not loading,
-      // and it was meant to play, this ensures isPlaying is true.
-      // This is more complex with auto-play, rely on `play` event for `isPlaying`.
-
       return () => {
         audio.removeEventListener('play', handlePlay);
         audio.removeEventListener('pause', handlePause);
         audio.removeEventListener('ended', handleEnded);
       };
     }
-  }, [audioSrc]); // Effect depends on audioSrc to re-bind events if src changes
+  }, [audioSrc]); 
 
 
   return (
@@ -227,9 +239,30 @@ export default function VocalizePage() {
             </div>
 
             <div>
-              <Label htmlFor="text-input" className="block text-sm font-medium text-foreground mb-1">
-                Enter your text
-              </Label>
+              <div className="flex items-center mb-1">
+                <Label htmlFor="text-input" className="block text-sm font-medium text-foreground">
+                  Enter your text
+                </Label>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button variant="ghost" size="icon" className="ml-2 h-5 w-5 p-0">
+                        <Info className="h-4 w-4 text-muted-foreground" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-md" side="top">
+                      <p className="font-semibold mb-2 text-base">Supported Languages (auto-detected):</p>
+                      <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
+                        {supportedLanguages.map(lang => (
+                          <div key={lang.code}>
+                            <span className="font-medium">{lang.name}</span> ({lang.code})
+                          </div>
+                        ))}
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
               <Textarea
                 id="text-input"
                 value={text}
@@ -241,7 +274,6 @@ export default function VocalizePage() {
               />
             </div>
            
-            {/* Removed submit button from form structure */}
           </div>
 
           {error && (
@@ -300,3 +332,4 @@ export default function VocalizePage() {
     </div>
   );
 }
+
