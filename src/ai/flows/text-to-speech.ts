@@ -49,7 +49,7 @@ const voiceNameTool = ai.defineTool(
 
 async function generateAndStreamAudio(text: string, voiceName: string): Promise<string> {
   const response = await ai.generate({
-    model: 'googleai/gemini-1.5-flash-latest',
+    model: 'googleai/gemini-2.5-flash-preview-tts',
     prompt: text,
     config: {
       responseModalities: ['AUDIO'],
