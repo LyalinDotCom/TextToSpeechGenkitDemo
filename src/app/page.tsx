@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from 'react';
-import { textToSpeech } from '@/ai/flows/text-to-speech';
+import { textToSpeech, TextToSpeechInput } from '@/ai/flows/text-to-speech';
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -52,6 +52,10 @@ export default function VocalizePage() {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  
+  const [generatedForText, setGeneratedForText] = useState<string | null>(null);
+  const [generatedForVoice, setGeneratedForVoice] = useState<string | null>(null);
+
   const audioRef = useRef<HTMLAudioElement>(null);
   const { toast } = useToast();
 
@@ -63,61 +67,81 @@ export default function VocalizePage() {
     setSelectedVoice(value);
   };
 
-  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const handlePrimaryAction = async () => {
     if (!text.trim()) {
       setError("Please enter some text to generate speech.");
+      toast({
+        variant: "destructive",
+        title: "Input Required",
+        description: "Please enter some text.",
+      });
       return;
     }
 
-    setIsLoading(true);
-    setError(null);
-    setAudioSrc(null);
-    setIsPlaying(false);
+    const needsGeneration = !audioSrc || text !== generatedForText || selectedVoice !== generatedForVoice;
 
-    try {
-      const result = await textToSpeech({ text, voiceName: selectedVoice });
-      if (result.audioDataUri) {
-        setAudioSrc(result.audioDataUri);
+    if (needsGeneration) {
+      setIsLoading(true);
+      setError(null);
+      setIsPlaying(false); // Stop any previous playback
+
+      try {
+        const input: TextToSpeechInput = { text, voiceName: selectedVoice };
+        const result = await textToSpeech(input);
+        if (result.audioDataUri) {
+          setAudioSrc(result.audioDataUri);
+          setGeneratedForText(text);
+          setGeneratedForVoice(selectedVoice);
+          
+          toast({
+            title: "Speech Generated",
+            description: "Audio is ready and will play shortly.",
+          });
+          // Autoplay after generation. Use timeout to ensure <audio> has new src.
+          setTimeout(() => {
+            if (audioRef.current) {
+              audioRef.current.play().catch(playError => {
+                console.error("Error auto-playing generated audio:", playError);
+                setError("Could not automatically play audio. Click Play to try again.");
+                toast({ variant: "destructive", title: "Playback Error", description: "Could not auto-play audio." });
+              });
+            }
+          }, 100); // Small delay for src update
+        } else {
+          throw new Error("Audio generation failed to return data.");
+        }
+      } catch (err) {
+        console.error("Error generating speech:", err);
+        const errorMessage = err instanceof Error ? err.message : "An unknown error occurred.";
+        setError(`Failed to generate speech: ${errorMessage}`);
         toast({
-          title: "Speech Generated",
-          description: "Your audio is ready to play and download.",
+          variant: "destructive",
+          title: "Generation Error",
+          description: `Failed to generate speech: ${errorMessage}`,
         });
-      } else {
-        throw new Error("Audio generation failed to return data.");
+        setAudioSrc(null);
+        setGeneratedForText(null);
+        setGeneratedForVoice(null);
+      } finally {
+        setIsLoading(false);
       }
-    } catch (err) {
-      console.error("Error generating speech:", err);
-      const errorMessage = err instanceof Error ? err.message : "An unknown error occurred.";
-      setError(`Failed to generate speech: ${errorMessage}`);
-      toast({
-        variant: "destructive",
-        title: "Error",
-        description: `Failed to generate speech: ${errorMessage}`,
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const togglePlayPause = () => {
-    if (audioRef.current) {
+    } else if (audioRef.current) { // Audio already generated and matches current inputs
       if (isPlaying) {
         audioRef.current.pause();
       } else {
         audioRef.current.play().catch(playError => {
           console.error("Error playing audio:", playError);
-          setError("Could not play audio. Please try generating again.");
+          setError("Could not play audio. Please try generating again or check console.");
            toast({
             variant: "destructive",
             title: "Playback Error",
-            description: "Could not play audio. Please try generating again.",
+            description: "Could not play the audio.",
           });
         });
       }
     }
   };
-
+  
   const handleDownload = () => {
     if (audioSrc) {
       const link = document.createElement('a');
@@ -130,14 +154,13 @@ export default function VocalizePage() {
           const mimeType = mimeTypeMatch[1];
           if (mimeType === 'audio/wav' || mimeType === 'audio/x-wav') extension = 'wav';
           else if (mimeType === 'audio/mpeg') extension = 'mp3';
-          else if (mimeType === 'audio/ogg') extension = 'ogg';
-          else if (mimeType === 'audio/webm') extension = 'webm';
+          // Add more mimetypes if needed
         }
       } catch (e) {
-        console.warn("Could not determine audio MIME type from data URI for extension, defaulting to .wav");
+        console.warn("Could not determine audio MIME type, defaulting to .wav");
       }
       
-      link.download = `vocalize_speech.${extension}`;
+      link.download = `vocalize_speech_${Date.now()}.${extension}`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -158,6 +181,10 @@ export default function VocalizePage() {
       audio.addEventListener('play', handlePlay);
       audio.addEventListener('pause', handlePause);
       audio.addEventListener('ended', handleEnded);
+      
+      // If audioSrc is changed (e.g. new generation) and it's not loading,
+      // and it was meant to play, this ensures isPlaying is true.
+      // This is more complex with auto-play, rely on `play` event for `isPlaying`.
 
       return () => {
         audio.removeEventListener('play', handlePlay);
@@ -165,7 +192,7 @@ export default function VocalizePage() {
         audio.removeEventListener('ended', handleEnded);
       };
     }
-  }, [audioSrc]);
+  }, [audioSrc]); // Effect depends on audioSrc to re-bind events if src changes
 
 
   return (
@@ -177,10 +204,10 @@ export default function VocalizePage() {
 
       <Card className="w-full max-w-2xl shadow-xl rounded-xl">
         <CardHeader>
-          <CardTitle className="text-2xl font-headline text-center">Generate Speech</CardTitle>
+          <CardTitle className="text-2xl font-headline text-center">Create Your Audio</CardTitle>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-6">
+          <div className="space-y-6">
             <div>
               <Label htmlFor="voice-select" className="block text-sm font-medium text-foreground mb-1">
                 Choose a voice
@@ -213,21 +240,9 @@ export default function VocalizePage() {
                 aria-label="Text to convert to speech"
               />
             </div>
-            <Button
-              type="submit"
-              disabled={isLoading || !text.trim()}
-              className="w-full text-base py-3 rounded-md"
-            >
-              {isLoading ? (
-                <>
-                  <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                  Generating...
-                </>
-              ) : (
-                "Generate Speech"
-              )}
-            </Button>
-          </form>
+           
+            {/* Removed submit button from form structure */}
+          </div>
 
           {error && (
             <Alert variant="destructive" className="mt-6">
@@ -237,32 +252,45 @@ export default function VocalizePage() {
             </Alert>
           )}
 
-          {audioSrc && (
-            <div className="mt-8 pt-6 border-t border-border">
-              <h3 className="text-lg font-semibold text-foreground mb-4 text-center">Generated Audio</h3>
-              <audio ref={audioRef} src={audioSrc} className="hidden" />
-              <div className="flex flex-col sm:flex-row justify-center items-center space-y-4 sm:space-y-0 sm:space-x-4">
-                <Button
-                  onClick={togglePlayPause}
-                  variant="outline"
-                  className="w-full sm:w-auto flex items-center justify-center text-base py-3 rounded-md"
-                  aria-label={isPlaying ? "Pause audio" : "Play audio"}
-                >
-                  {isPlaying ? <Pause className="mr-2 h-5 w-5" /> : <Play className="mr-2 h-5 w-5" />}
-                  {isPlaying ? 'Pause' : 'Play'}
-                </Button>
-                <Button
-                  onClick={handleDownload}
-                  variant="outline"
-                  className="w-full sm:w-auto flex items-center justify-center text-base py-3 rounded-md"
-                  aria-label="Download audio as WAV file"
-                >
-                  <Download className="mr-2 h-5 w-5" />
-                  Download Audio
-                </Button>
-              </div>
+          <div className="mt-8 pt-6 border-t border-border">
+             <h3 className="text-lg font-semibold text-foreground mb-4 text-center">
+                {audioSrc && text === generatedForText && selectedVoice === generatedForVoice ? "Audio Controls" : "Generate & Play"}
+            </h3>
+            <audio ref={audioRef} src={audioSrc || ''} className="hidden" />
+            <div className="flex flex-col sm:flex-row justify-center items-center space-y-4 sm:space-y-0 sm:space-x-4">
+              <Button
+                onClick={handlePrimaryAction}
+                disabled={isLoading || !text.trim()}
+                className="w-full sm:w-auto flex items-center justify-center text-base py-3 rounded-md min-w-[150px]"
+                aria-label={isLoading ? "Generating speech" : (isPlaying ? "Pause audio" : "Play audio")}
+              >
+                {isLoading ? (
+                  <>
+                    <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                    Generating...
+                  </>
+                ) : isPlaying ? (
+                  <>
+                    <Pause className="mr-2 h-5 w-5" /> Pause
+                  </>
+                ) : (
+                  <>
+                    <Play className="mr-2 h-5 w-5" /> Play
+                  </>
+                )}
+              </Button>
+              <Button
+                onClick={handleDownload}
+                variant="outline"
+                disabled={!audioSrc || isLoading}
+                className="w-full sm:w-auto flex items-center justify-center text-base py-3 rounded-md min-w-[180px]"
+                aria-label="Download audio"
+              >
+                <Download className="mr-2 h-5 w-5" />
+                Download Audio
+              </Button>
             </div>
-          )}
+          </div>
         </CardContent>
       </Card>
 
@@ -272,5 +300,3 @@ export default function VocalizePage() {
     </div>
   );
 }
-
-    
